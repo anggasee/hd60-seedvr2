@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 
 import requests
@@ -27,14 +28,34 @@ DEFAULT_MODEL = "seedvr2_ema_3b_fp16.safetensors"
 
 
 def run(cmd, timeout=None):
+    """Jalankan perintah, cetak outputnya LANGSUNG ke log RunPod, dan matikan kalau lewat batas waktu."""
     print("[hd60] $ " + " ".join(cmd), flush=True)
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    tail = (p.stdout[-3000:] + "\n" + p.stderr[-3000:]).strip()
-    print(tail, flush=True)
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+    lines = []
+    deadline = time.time() + timeout if timeout else None
+
+    def watchdog():
+        while p.poll() is None:
+            if deadline and time.time() > deadline:
+                print("[hd60] BATAS WAKTU TERLEWAT, proses dimatikan", flush=True)
+                p.kill()
+                return
+            time.sleep(2)
+
+    threading.Thread(target=watchdog, daemon=True).start()
+    for line in p.stdout:
+        line = line.rstrip()
+        lines.append(line)
+        print(line, flush=True)
+    p.wait()
+    tail = "\n".join(lines[-40:])
+    if deadline and time.time() > deadline and p.returncode != 0:
+        raise RuntimeError(f"batas waktu {timeout}s terlewat | log: {tail[-600:]}")
     if p.returncode != 0:
         # baris error terakhir (mis. "RuntimeError: ...") ditaruh paling depan supaya terlihat di HD60 Studio
-        lines = [l for l in tail.splitlines() if l.strip()]
-        last = next((l for l in reversed(lines) if "Error" in l or "error:" in l), lines[-1] if lines else "")
+        ls = [l for l in lines if l.strip()]
+        last = next((l for l in reversed(ls) if "Error" in l or "error:" in l), ls[-1] if ls else "")
         raise RuntimeError(f"{last.strip()[:300]} | log: {tail[-600:]}")
     return p
 
@@ -89,7 +110,7 @@ def handler(job):
             "--color_correction", "lab",
             "--vae_encode_tiled",
             "--vae_decode_tiled",
-        ], timeout=3 * 3600)
+        ], timeout=25 * 60)
 
         outs = sorted(glob.glob(os.path.join(outdir, "**", "*.mp4"), recursive=True), key=os.path.getmtime)
         if not outs:
