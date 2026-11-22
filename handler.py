@@ -32,7 +32,10 @@ def run(cmd, timeout=None):
     tail = (p.stdout[-3000:] + "\n" + p.stderr[-3000:]).strip()
     print(tail, flush=True)
     if p.returncode != 0:
-        raise RuntimeError(f"perintah gagal ({p.returncode}): {tail[-800:]}")
+        # baris error terakhir (mis. "RuntimeError: ...") ditaruh paling depan supaya terlihat di HD60 Studio
+        lines = [l for l in tail.splitlines() if l.strip()]
+        last = next((l for l in reversed(lines) if "Error" in l or "error:" in l), lines[-1] if lines else "")
+        raise RuntimeError(f"{last.strip()[:300]} | log: {tail[-600:]}")
     return p
 
 

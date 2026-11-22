@@ -1,18 +1,23 @@
 # HD60 Studio · SeedVR2 worker untuk RunPod Serverless
-# GPU yang disarankan: 24 GB (RTX 4090 / L4 / A5000 / RTX 3090)
+# GPU 24 GB. PyTorch 2.8 + CUDA 12.8: jalan di GPU lama (Ampere/Ada/Hopper) dan Blackwell.
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    HF_HUB_ENABLE_HF_TRANSFER=1
+    PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git \
     && rm -rf /var/lib/apt/lists/*
 
+# PyTorch 2.8 (cu128) dipasang lebih dulu, lalu dikunci supaya requirements tidak menggantinya
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128 \
+    && printf "torch==2.8.0\ntorchvision==0.23.0\n" > /tmp/constraints.txt
+
 # SeedVR2 (numz/ComfyUI-SeedVR2_VideoUpscaler, Apache-2.0) – dipakai lewat CLI standalone
 RUN git clone --depth 1 https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git /app/seedvr2 \
-    && pip install --no-cache-dir -r /app/seedvr2/requirements.txt \
-    && pip install --no-cache-dir runpod requests huggingface_hub hf_transfer
+    && pip install --no-cache-dir -r /app/seedvr2/requirements.txt -c /tmp/constraints.txt \
+    && pip install --no-cache-dir runpod requests huggingface_hub -c /tmp/constraints.txt \
+    && python -c "import torch, diffusers; print('torch', torch.__version__, 'arch', torch.cuda.get_arch_list(), 'diffusers', diffusers.__version__)"
 
 # Model 3B FP16 + VAE dimasukkan ke image supaya tidak download ulang tiap cold start.
 # Kalau langkah ini gagal, build tetap lanjut dan CLI akan download otomatis saat dipakai pertama.
